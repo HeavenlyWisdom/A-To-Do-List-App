@@ -1,44 +1,71 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:task_1_todolist_app/data/models/task.dart';
+import '../data/models/task.dart';
 
-final taskBoxProvider = Provider<Box<Task>>((ref) {
-  return Hive.box<Task>('tasks');
-});
-
-final tasksProvider = StateNotifierProvider<TasksNotifier, List<Task>>((ref) {
-  final box = ref.watch(taskBoxProvider);
-  return TasksNotifier(box);
-});
+final tasksProvider = StateNotifierProvider<TasksNotifier, List<Task>>(
+  (ref) => TasksNotifier(),
+);
 
 class TasksNotifier extends StateNotifier<List<Task>> {
-  final Box<Task> _box;
+  final Box<Task> _box = Hive.box<Task>('tasks');
 
-  TasksNotifier(this._box) : super(_box.values.toList()..sort(_taskSorter));
-
-  static int _taskSorter(Task a, Task b) {
-    if (a.isCompleted != b.isCompleted) {
-      return a.isCompleted ? 1 : -1;
-    }
-    return b.createdAt.compareTo(a.createdAt);
+  TasksNotifier() : super([]) {
+    _loadTasks();
   }
 
+  void _loadTasks() {
+    state = _box.values.toList();
+  }
+
+  // ---------- READ HELPERS ----------
+  List<Task> get activeTasks => state.where((t) => !t.isCompleted).toList();
+
+  List<Task> get completedTasks => state.where((t) => t.isCompleted).toList();
+
+  // ---------- ACTIONS ----------
   void addTask(Task task) {
     _box.put(task.id, task);
-    state = [..._box.values]..sort(_taskSorter);
+    state = [...state, task];
   }
 
-  void toggleComplete(String id) {
-    final task = _box.get(id);
-    if (task != null) {
-      final updated = task.copyWith(isCompleted: !task.isCompleted);
-      _box.put(id, updated);
-      state = [..._box.values]..sort(_taskSorter);
-    }
+  Future<void> toggleComplete(String id) async {
+    final index = state.indexWhere((t) => t.id == id);
+    if (index == -1) return;
+
+    final updated = state[index].copyWith(isCompleted: true);
+    _box.put(id, updated);
+
+    // Strike-through state
+    state = [
+      ...state.sublist(0, index),
+      updated,
+      ...state.sublist(index + 1),
+    ];
+
+    // Delay before moving out of Home
+    await Future.delayed(const Duration(milliseconds: 450));
+
+    state = [
+      ...state.where((t) => t.id != id),
+      updated,
+    ];
   }
 
-  void deleteTask(String id) {
+  void restoreTask(String id) {
+    final restored = state.firstWhere((t) => t.id == id).copyWith(
+          isCompleted: false,
+        );
+
+    _box.put(id, restored);
+
+    state = [
+      ...state.where((t) => t.id != id),
+      restored,
+    ];
+  }
+
+  void permanentlyDeleteTask(String id) {
     _box.delete(id);
-    state = [..._box.values]..sort(_taskSorter);
+    state = state.where((t) => t.id != id).toList();
   }
 }
